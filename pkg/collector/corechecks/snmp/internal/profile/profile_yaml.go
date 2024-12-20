@@ -41,10 +41,7 @@ func loadYamlProfiles() (ProfileConfigMap, error) {
 	}
 	log.Debugf("build yaml profiles")
 
-	profiles, err := resolveProfiles(getYamlUserProfiles(), getYamlDefaultProfiles())
-	if err != nil {
-		return nil, err
-	}
+	profiles := resolveProfiles(getYamlUserProfiles(), getYamlDefaultProfiles())
 
 	SetGlobalProfileConfigMap(profiles)
 	return profiles, nil
