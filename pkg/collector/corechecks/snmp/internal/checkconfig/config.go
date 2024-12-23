@@ -9,6 +9,7 @@ package checkconfig
 import (
 	"context"
 	"fmt"
+	"github.com/DataDog/datadog-agent/comp/remote-config/rcclient"
 	"hash/fnv"
 	"net"
 	"sort"
@@ -266,7 +267,8 @@ func (c *CheckConfig) ToString() string {
 }
 
 // NewCheckConfig builds a new check config
-func NewCheckConfig(rawInstance integration.Data, rawInitConfig integration.Data) (*CheckConfig, error) {
+func NewCheckConfig(rawInstance integration.Data, rawInitConfig integration.Data, rcClient rcclient.Component) (*CheckConfig,
+	error) {
 	instance := InstanceConfig{}
 	initConfig := InitConfig{}
 
@@ -430,11 +432,15 @@ func NewCheckConfig(rawInstance integration.Data, rawInitConfig integration.Data
 		return nil, err
 	}
 
-	profiles, err := profile.GetProfileProvider(initConfig.Profiles)
+	// TODO(dpl) config flag for RC profiles
+	if rcClient != nil {
+		c.ProfileProvider, err = profile.NewRCProvider(rcClient, initConfig.Profiles)
+	} else {
+		c.ProfileProvider, err = profile.GetProfileProvider(initConfig.Profiles)
+	}
 	if err != nil {
 		return nil, err
 	}
-	c.ProfileProvider = profiles
 
 	// profile configs
 	c.ProfileName = instance.Profile
