@@ -24,7 +24,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	rl "k8s.io/client-go/tools/leaderelection/resourcelock"
 
-	telemetryComponent "github.com/DataDog/datadog-agent/comp/core/telemetry"
 	cmLock "github.com/DataDog/datadog-agent/internal/third_party/client-go/tools/leaderelection/resourcelock"
 	dderrors "github.com/DataDog/datadog-agent/pkg/errors"
 	"github.com/DataDog/datadog-agent/pkg/util/cache"
@@ -117,7 +116,6 @@ func TestNewLeaseAcquiring(t *testing.T) {
 				LeaseDuration:   1 * time.Second,
 				coreClient:      client.CoreV1(),
 				coordClient:     client.CoordinationV1(),
-				leaderMetric:    &dummyGauge{},
 				lockType:        tt.lockType,
 			}
 
@@ -211,7 +209,6 @@ func TestSubscribe(t *testing.T) {
 				LeaseDuration:   1 * time.Second,
 				coreClient:      client.CoreV1(),
 				coordClient:     client.CoordinationV1(),
-				leaderMetric:    &dummyGauge{},
 				lockType:        tc.lockType,
 			}
 
@@ -312,7 +309,6 @@ func TestGetLeaderIPFollower_ConfigMap(t *testing.T) {
 		LeaseDuration:   120 * time.Second,
 		coreClient:      client.CoreV1(),
 		coordClient:     client.CoordinationV1(),
-		leaderMetric:    &dummyGauge{},
 		lockType:        cmLock.ConfigMapsResourceLock,
 	}
 
@@ -395,7 +391,6 @@ func TestGetLeaderIPFollower_Lease(t *testing.T) {
 		LeaseDuration:   120 * time.Second,
 		coreClient:      client.CoreV1(),
 		coordClient:     client.CoordinationV1(),
-		leaderMetric:    &dummyGauge{},
 		lockType:        rl.LeasesResourceLock,
 	}
 
@@ -463,30 +458,3 @@ func TestGetLeaderIPFollower_Lease(t *testing.T) {
 	assert.Equal(t, "", ip)
 	assert.True(t, dderrors.IsNotFound(err))
 }
-
-type dummyGauge struct{}
-
-// Set does nothing
-
-func (g *dummyGauge) Set(_ float64, _ ...string) {}
-
-// Inc does nothing
-func (g *dummyGauge) Inc(_ ...string) {}
-
-// Dec does nothing
-func (g *dummyGauge) Dec(_ ...string) {}
-
-// Add does nothing
-func (g *dummyGauge) Add(_ float64, _ ...string) {}
-
-// Sub does nothing
-func (g *dummyGauge) Sub(_ float64, _ ...string) {}
-
-// Delete does nothing
-func (g *dummyGauge) Delete(_ ...string) {}
-
-// WithValues does nothing
-func (g *dummyGauge) WithValues(_ ...string) telemetryComponent.SimpleGauge { return nil }
-
-// WithTags does nothing
-func (g *dummyGauge) WithTags(_ map[string]string) telemetryComponent.SimpleGauge { return nil }

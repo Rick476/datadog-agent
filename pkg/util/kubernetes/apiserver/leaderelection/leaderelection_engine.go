@@ -10,7 +10,6 @@ package leaderelection
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 
 	coordv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
@@ -25,7 +24,6 @@ import (
 
 	configmaplock "github.com/DataDog/datadog-agent/internal/third_party/client-go/tools/leaderelection/resourcelock"
 	pkgconfigsetup "github.com/DataDog/datadog-agent/pkg/config/setup"
-	"github.com/DataDog/datadog-agent/pkg/util/kubernetes/apiserver/leaderelection/metrics"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
 )
 
@@ -148,22 +146,16 @@ func (le *LeaderEngine) newElection() (*ld.LeaderElector, error) {
 	callbacks := ld.LeaderCallbacks{
 		OnNewLeader: func(identity string) {
 			le.updateLeaderIdentity(identity)
-			le.reportLeaderMetric(identity == le.HolderIdentity)
-			log.Infof("New leader %q", identity)
 		},
 		OnStartedLeading: func(context.Context) {
 			le.updateLeaderIdentity(le.HolderIdentity)
-			le.reportLeaderMetric(true)
 			le.notify() // current process gained leadership
-			log.Infof("Started leading as %q...", le.HolderIdentity)
 		},
 		// OnStoppedLeading shouldn't be called unless the election is lost. This could happen if
 		// we lose connection to the apiserver for the duration of the lease.
 		OnStoppedLeading: func() {
 			le.updateLeaderIdentity("")
-			le.reportLeaderMetric(false)
 			le.notify() // current process lost leadership
-			log.Infof("Stopped leading %q", le.HolderIdentity)
 		},
 	}
 
@@ -199,6 +191,7 @@ func (le *LeaderEngine) newElection() (*ld.LeaderElector, error) {
 		RenewDeadline:   le.LeaseDuration / 2,
 		RetryPeriod:     le.LeaseDuration / 4,
 		Callbacks:       callbacks,
+		Name:            le.HolderIdentity,
 	}
 	return ld.NewLeaderElector(electionConfig)
 }
@@ -208,16 +201,6 @@ func (le *LeaderEngine) updateLeaderIdentity(identity string) {
 	le.leaderIdentityMutex.Lock()
 	defer le.leaderIdentityMutex.Unlock()
 	le.leaderIdentity = identity
-}
-
-// reportLeaderMetric updates the label of the leader metric on every leadership change
-func (le *LeaderEngine) reportLeaderMetric(isLeader bool) {
-	// We want to make sure only one (the latest) context is exposed for this metric
-	// Delete previous run metric
-	le.leaderMetric.Delete(metrics.JoinLeaderValue, "false")
-	le.leaderMetric.Delete(metrics.JoinLeaderValue, "true")
-
-	le.leaderMetric.Set(1.0, metrics.JoinLeaderValue, strconv.FormatBool(isLeader))
 }
 
 // notify sends a notification to subscribers when the leadership state of the current

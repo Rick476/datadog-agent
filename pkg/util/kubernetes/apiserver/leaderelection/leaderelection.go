@@ -68,9 +68,6 @@ type LeaderEngine struct {
 
 	// leaderIdentity is the HolderIdentity of the current leader.
 	leaderIdentity string
-
-	// leaderMetric indicates whether this instance is leader
-	leaderMetric telemetry.Gauge
 }
 
 func newLeaderEngine(ctx context.Context) *LeaderEngine {
@@ -79,7 +76,6 @@ func newLeaderEngine(ctx context.Context) *LeaderEngine {
 		LeaseName:       pkgconfigsetup.Datadog().GetString("leader_lease_name"),
 		LeaderNamespace: common.GetResourcesNamespace(),
 		ServiceName:     pkgconfigsetup.Datadog().GetString("cluster_agent.kubernetes_service_name"),
-		leaderMetric:    metrics.NewLeaderMetric(),
 		subscribers:     []chan struct{}{},
 		LeaseDuration:   defaultLeaderLeaseDuration,
 	}
@@ -124,8 +120,41 @@ func CreateGlobalLeaderEngine(ctx context.Context) *LeaderEngine {
 			InitialRetryDelay: 1 * time.Second,
 			MaxRetryDelay:     5 * time.Minute,
 		})
+		leaderelection.SetProvider(metricsProvider{})
 	}
 	return globalLeaderEngine
+}
+
+type metricsProvider struct{}
+
+func (metricsProvider) NewLeaderMetric() leaderelection.LeaderMetric {
+	return &observer{
+		leaderMetric:      metrics.NewLeaderMetric(),
+		slowpathExercised: metrics.NewSlowpathExercised(),
+	}
+}
+
+type observer struct {
+	leaderMetric      telemetry.Gauge
+	slowpathExercised telemetry.Gauge
+}
+
+func (o *observer) On(name string) {
+	o.leaderMetric.Delete(metrics.JoinLeaderValue, "false", name)
+	o.leaderMetric.Set(1, metrics.JoinLeaderValue, "true", name)
+	log.Infof("New leader %q", name)
+}
+
+func (o *observer) Off(name string) {
+	o.leaderMetric.Delete(metrics.JoinLeaderValue, "true", name)
+	o.slowpathExercised.Delete("true", name)
+	o.leaderMetric.Set(1, metrics.JoinLeaderValue, "false", name)
+	log.Infof("Stopped leading %q", name)
+}
+
+func (o *observer) SlowpathExercised(name string) {
+	o.slowpathExercised.Set(1, "true", name)
+	log.Infof("Slowpath exercised %q", name)
 }
 
 func (le *LeaderEngine) init() error {
