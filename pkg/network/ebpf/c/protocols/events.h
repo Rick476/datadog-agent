@@ -5,31 +5,14 @@
 #include "bpf_telemetry.h"
 #define _STR(x) #x
 
-/* USM_EVENTS_INIT defines two functions used for the purposes of buffering and sending
-   data to userspace:
-   1) <name>_batch_enqueue
-   2) <name>_batch_flush
-   For more information of this please refer to
-   pkg/networks/protocols/events/README.md */
-#define USM_EVENTS_INIT(name, value, batch_size)                                                        \
-    _Static_assert((sizeof(value)*batch_size) <= BATCH_BUFFER_SIZE,                                     \
-                   _STR(name)" batch is too large");                                                    \
-                                                                                                        \
-    BPF_PERCPU_ARRAY_MAP(name##_batch_state, batch_state_t, 1)                                          \
-    BPF_PERF_EVENT_ARRAY_MAP(name##_batch_events, __u32)                                                \
-    BPF_HASH_MAP(name##_batches, batch_key_t, batch_data_t, 1)                                          \
-                                                                                                        \
-    static __always_inline bool name##_batch_full(batch_data_t *batch) {                                \
-        return batch && batch->len == batch_size;                                                       \
-    }                                                                                                   \
-                                                                                                        \
-    static __always_inline bool is_##name##_monitoring_enabled() {                                      \
-        __u64 val = 0;                                                                                  \
-        LOAD_CONSTANT(_STR(name##_monitoring_enabled), val);                                            \
-        return val > 0;                                                                                 \
-    }                                                                                                   \
-                                                                                                        \
-    static __always_inline void name##_batch_flush_common(struct pt_regs *ctx, bool with_telemetry) {   \
+/* BATCH_FLUSH_INTERNAL defines a function responsible for flushing batches of data to userspace:
+   1) <name>_<function_name> (e.g., http_batch_flush)
+
+   This function flushes a batch of data to either a ring buffer or a perf event output, depending on the
+   `use_ring_buffer` configuration flag. It accepts both a ringbuf_output function and a perf_event_output
+   function, allowing the use of different telemetry flavor functions as needed. */
+#define BATCH_FLUSH_INTERNAL(name, function_name, ringbuf_output_fn, perf_event_output_fn)              \
+    static __always_inline void name##_##function_name(struct pt_regs *ctx) {                           \
         if (!is_##name##_monitoring_enabled()) {                                                        \
             return;                                                                                     \
         }                                                                                               \
@@ -55,47 +38,57 @@
                 }                                                                                       \
                                                                                                         \
                 if (use_ring_buffer) {                                                                  \
-                    if (with_telemetry) {                                                               \
-                        perf_ret = bpf_ringbuf_output_with_telemetry(&name##_batch_events, batch, sizeof(batch_data_t), 0);\
-                    } else {                                                                            \
-                        perf_ret = bpf_ringbuf_output(&name##_batch_events, batch, sizeof(batch_data_t), 0);\
-                    }                                                                                   \
+                    perf_ret = ringbuf_output_fn(&name##_batch_events, batch, sizeof(batch_data_t), 0); \
                 } else {                                                                                \
-                    if (with_telemetry) {                                                               \
-                        perf_ret = bpf_perf_event_output_with_telemetry(ctx,                            \
-                                                         &name##_batch_events,                          \
-                                                         key.cpu,                                       \
-                                                         batch,                                         \
-                                                         sizeof(batch_data_t));                         \
-                    } else {                                                                            \
-                        perf_ret = bpf_perf_event_output(ctx,                                           \
-                                                     &name##_batch_events,                              \
-                                                     key.cpu,                                           \
-                                                     batch,                                             \
-                                                     sizeof(batch_data_t));                             \
-                    }                                                                                   \
+                    perf_ret = perf_event_output_fn(ctx,                                                \
+                                                    &name##_batch_events,                               \
+                                                    key.cpu,                                            \
+                                                    batch,                                              \
+                                                    sizeof(batch_data_t));                              \
                 }                                                                                       \
                 if (perf_ret < 0) {                                                                     \
-                    _LOG(name, "batch flush error: cpu: %d idx: %llu err: %ld",                           \
+                    _LOG(name, "batch flush error: cpu: %d idx: %llu err: %ld",                         \
                          key.cpu, batch->idx, perf_ret);                                                \
                     batch->failed_flushes++;                                                            \
                     return;                                                                             \
                 }                                                                                       \
                                                                                                         \
-                _LOG(name, "batch flushed: cpu: %d idx: %llu", key.cpu, batch->idx);                      \
+                _LOG(name, "batch flushed: cpu: %d idx: %llu", key.cpu, batch->idx);                    \
                 batch->dropped_events = 0;                                                              \
                 batch->failed_flushes = 0;                                                              \
                 batch->len = 0;                                                                         \
                 batch_state->idx_to_flush++;                                                            \
             }                                                                                           \
     }                                                                                                   \
+
+#define BATCH_FLUSH(name) BATCH_FLUSH_INTERNAL(name, batch_flush, bpf_ringbuf_output, bpf_perf_event_output)
+#define BATCH_FLUSH_WITH_TELEMETRY(name) BATCH_FLUSH_INTERNAL(name, batch_flush_with_telemetry, bpf_ringbuf_output_with_telemetry, bpf_perf_event_output_with_telemetry)
+
+/* USM_EVENTS_INIT defines two functions used for the purposes of buffering and sending
+   data to userspace:
+   1) <name>_batch_enqueue
+   2) <name>_batch_flush
+   For more information of this please refer to
+   pkg/networks/protocols/events/README.md */
+#define USM_EVENTS_INIT(name, value, batch_size)                                                        \
+    _Static_assert((sizeof(value)*batch_size) <= BATCH_BUFFER_SIZE,                                     \
+                   _STR(name)" batch is too large");                                                    \
                                                                                                         \
-    static __always_inline void name##_batch_flush(struct pt_regs *ctx) {                               \
-        name##_batch_flush_common(ctx, false);                                                          \
+    BPF_PERCPU_ARRAY_MAP(name##_batch_state, batch_state_t, 1)                                          \
+    BPF_PERF_EVENT_ARRAY_MAP(name##_batch_events, __u32)                                                \
+    BPF_HASH_MAP(name##_batches, batch_key_t, batch_data_t, 1)                                          \
+                                                                                                        \
+    static __always_inline bool is_##name##_monitoring_enabled() {                                      \
+        __u64 val = 0;                                                                                  \
+        LOAD_CONSTANT(_STR(name##_monitoring_enabled), val);                                            \
+        return val > 0;                                                                                 \
     }                                                                                                   \
                                                                                                         \
-    static __always_inline void name##_batch_flush_with_telemetry(struct pt_regs *ctx) {                \
-        name##_batch_flush_common(ctx, true);                                                           \
+    BATCH_FLUSH(name)                                                                                   \
+    BATCH_FLUSH_WITH_TELEMETRY(name)                                                                    \
+                                                                                                        \
+    static __always_inline bool name##_batch_full(batch_data_t *batch) {                                \
+        return batch && batch->len == batch_size;                                                       \
     }                                                                                                   \
                                                                                                         \
     static __always_inline void name##_batch_enqueue(value *event) {                                    \
