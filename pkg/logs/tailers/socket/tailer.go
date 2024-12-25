@@ -72,6 +72,7 @@ func (t *Tailer) forwardMessages() {
 			origin := message.NewOrigin(t.source)
 			origin.SetTags(output.ParsingExtra.Tags)
 			t.source.BytesRead.Add(int64(len(output.GetContent())))
+			log.Debugf("%q is going to be sent to output chan, it was ingested at %d", output.GetContent(), output.IngestionTimestamp)
 			t.outputChan <- message.NewMessage(output.GetContent(), origin, output.Status, output.IngestionTimestamp)
 		}
 	}
@@ -111,6 +112,7 @@ func (t *Tailer) readForever() {
 				sourceHostTag := fmt.Sprintf("source_host:%s", ipAddressWithoutPort)
 				msg.ParsingExtra.Tags = append(msg.ParsingExtra.Tags, sourceHostTag)
 			}
+			log.Debugf("%q is going to be sent to decoder input chan, it was ingested at %d", msg.GetContent(), msg.IngestionTimestamp)
 			t.decoder.InputChan <- msg
 		}
 	}

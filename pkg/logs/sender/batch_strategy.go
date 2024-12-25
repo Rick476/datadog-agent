@@ -130,6 +130,7 @@ func (s *batchStrategy) Start() {
 }
 
 func (s *batchStrategy) processMessage(m *message.Message, outputChan chan *message.Payload) {
+	log.Debugf("%q at %d, latency: %d", m.GetContent(), m.IngestionTimestamp, m.GetLatency())
 	if m.Origin != nil {
 		m.Origin.LogSource.LatencyStats.Add(m.GetLatency())
 	}
